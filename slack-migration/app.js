@@ -20,9 +20,13 @@ let chart = null;
 let migrationData = [];
 let upstreamPrediction = null;
 let currentProxyIndex = 0;
+let isUpdating = false;
+let lastUpdateTime = null;
 
 // Fetch data from the API (returns HTML with embedded JS data)
 async function fetchMigrationData() {
+    setUpdatingIndicator(true);
+    
     // Try each proxy until one works
     for (let i = 0; i < CORS_PROXIES.length; i++) {
         const proxyIndex = (currentProxyIndex + i) % CORS_PROXIES.length;
@@ -39,6 +43,8 @@ async function fetchMigrationData() {
             if (data && data.length > 0) {
                 currentProxyIndex = proxyIndex; // Remember working proxy
                 hideError();
+                lastUpdateTime = new Date();
+                setUpdatingIndicator(false);
                 return data;
             }
         } catch (error) {
@@ -47,6 +53,7 @@ async function fetchMigrationData() {
         }
     }
     
+    setUpdatingIndicator(false);
     showError('Failed to fetch data. CORS may be blocking the request. Try opening the source URL directly or use a local proxy.');
     return null;
 }
@@ -70,13 +77,23 @@ function parseHtmlData(html) {
             return [];
         }
         
-        // Parse labels (they are strings like "2025-11-24 19:24:50")
         const labelsStr = labelsMatch[1];
-        const labels = labelsStr.match(/"([^"]+)"/g)?.map(s => s.replace(/"/g, '')) || [];
+        const valuesStr = valuesMatch[1];
         
         // Parse values (they are numbers)
-        const valuesStr = valuesMatch[1];
         const values = valuesStr.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+        
+        // Detect label format: numeric timestamps (milliseconds) or string dates
+        // New format: [1764012290000.0, 1764012355000.0, ...] - Unix timestamps in milliseconds
+        // Old format: ["2025-11-24 19:24:50", ...] - UTC date strings
+        let labels;
+        if (labelsStr.includes('"')) {
+            // Old format: string dates
+            labels = labelsStr.match(/"([^"]+)"/g)?.map(s => s.replace(/"/g, '')) || [];
+        } else {
+            // New format: numeric timestamps in milliseconds
+            labels = labelsStr.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+        }
         
         // Store upstream prediction if available
         if (predictionMatch) {
@@ -89,17 +106,21 @@ function parseHtmlData(html) {
         // Combine labels and values into data points
         const data = [];
         for (let i = 0; i < Math.min(labels.length, values.length); i++) {
-            // Parse timestamp - expected format: "YYYY-MM-DD HH:mm:ss"
-            // Convert to ISO 8601 format by replacing space with T
-            const timestampStr = labels[i];
             let timestamp;
             
-            // Try ISO format first (with T separator)
-            if (timestampStr.includes('T')) {
-                timestamp = new Date(timestampStr);
+            if (typeof labels[i] === 'number') {
+                // New format: labels are Unix timestamps in milliseconds
+                timestamp = new Date(labels[i]);
             } else {
-                // Convert space-separated format to ISO format
-                timestamp = new Date(timestampStr.replace(' ', 'T'));
+                // Old format: labels are UTC date strings like "YYYY-MM-DD HH:mm:ss"
+                const timestampStr = labels[i];
+                if (timestampStr.includes('T')) {
+                    // Already in ISO format, ensure it's treated as UTC
+                    timestamp = new Date(timestampStr.endsWith('Z') ? timestampStr : timestampStr + 'Z');
+                } else {
+                    // Convert space-separated format to ISO format with UTC indicator
+                    timestamp = new Date(timestampStr.replace(' ', 'T') + 'Z');
+                }
             }
             
             if (!isNaN(timestamp.getTime())) {
@@ -299,6 +320,9 @@ function predictLinearRegression(data) {
 
 // UI Functions
 
+// Store predictions globally so chart can use them
+let currentPredictions = [];
+
 function updateUI(data) {
     if (!data || data.length === 0) {
         document.getElementById('progressText').textContent = 'No data';
@@ -311,7 +335,7 @@ function updateUI(data) {
     document.getElementById('progressFill').style.width = `${Math.min(current.percentage, 100)}%`;
     document.getElementById('progressText').textContent = `${current.percentage.toFixed(2)}%`;
     
-    // Update status details
+    // Update status details - display in local timezone
     document.getElementById('lastUpdated').textContent = formatTime(current.timestamp);
     document.getElementById('dataPoints').textContent = data.length.toLocaleString();
     
@@ -334,8 +358,9 @@ function updateUI(data) {
         });
     }
     
+    currentPredictions = predictions;
     renderPredictions(predictions);
-    updateChart(data);
+    updateChart(data, predictions);
 }
 
 function renderPredictions(predictions) {
@@ -370,8 +395,13 @@ function renderPredictions(predictions) {
     }
 }
 
-function updateChart(data) {
+function updateChart(data, predictions = []) {
     const ctx = document.getElementById('progressChart').getContext('2d');
+    
+    // Ensure we have data to display
+    if (!data || data.length === 0) {
+        return;
+    }
     
     // Sample data if there are too many points
     let chartData = data;
@@ -380,50 +410,136 @@ function updateChart(data) {
         chartData = data.filter((_, i) => i % step === 0 || i === data.length - 1);
     }
     
-    const labels = chartData.map(d => formatTime(d.timestamp));
-    const values = chartData.map(d => d.percentage);
+    // Convert to time series format for Chart.js
+    const dataPoints = chartData.map(d => ({
+        x: d.timestamp,
+        y: d.percentage
+    }));
+    
+    // Find the time range
+    const startTime = chartData[0].timestamp.getTime();
+    const lastDataTime = chartData[chartData.length - 1].timestamp.getTime();
+    const currentPercentage = chartData[chartData.length - 1].percentage;
+    
+    // Find the furthest prediction time to extend the chart
+    let endTime = lastDataTime;
+    for (const pred of predictions) {
+        if (pred.predictedTime && pred.predictedTime.getTime() > endTime) {
+            endTime = pred.predictedTime.getTime();
+        }
+    }
+    
+    // Cap at 24 hours from the last data point
+    endTime = Math.min(endTime, lastDataTime + MS_PER_DAY);
+    
+    // Define colors for prediction lines matching their card colors
+    const predictionColors = {
+        'upstream': '#611f69',
+        'overall': '#4a154b',
+        'recent': '#2eb67d',
+        'hour': '#36c5f0',
+        'weighted': '#ecb22e',
+        'regression': '#e01e5a'
+    };
+    
+    // Create datasets for each prediction line
+    const predictionDatasets = predictions.map(pred => {
+        // Skip if no predicted time
+        if (!pred.predictedTime) {
+            return null;
+        }
+        
+        // Skip if no rate (except for upstream which doesn't provide a rate)
+        if (!pred.ratePerHour && pred.className !== 'upstream') {
+            return null;
+        }
+        
+        // Create a line from current percentage to 100% at predicted time
+        return {
+            label: pred.name,
+            data: [
+                { x: lastDataTime, y: currentPercentage },
+                { x: pred.predictedTime.getTime(), y: 100 }
+            ],
+            borderColor: predictionColors[pred.className] || '#888',
+            borderWidth: 2,
+            borderDash: [5, 5],
+            pointRadius: 0,
+            fill: false,
+            tension: 0
+        };
+    }).filter(d => d !== null);
+    
+    // Main progress dataset
+    const datasets = [
+        {
+            label: 'Migration Progress (%)',
+            data: dataPoints,
+            borderColor: '#36c5f0',
+            backgroundColor: 'rgba(54, 197, 240, 0.1)',
+            fill: true,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHitRadius: 10
+        },
+        ...predictionDatasets
+    ];
     
     if (chart) {
-        chart.data.labels = labels;
-        chart.data.datasets[0].data = values;
+        chart.data.datasets = datasets;
+        chart.options.scales.x.min = startTime;
+        chart.options.scales.x.max = endTime;
         chart.update('none');
     } else {
         chart = new Chart(ctx, {
             type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Migration Progress (%)',
-                    data: values,
-                    borderColor: '#36c5f0',
-                    backgroundColor: 'rgba(54, 197, 240, 0.1)',
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: 0,
-                    pointHitRadius: 10
-                }]
-            },
+            data: { datasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
                     legend: {
-                        display: false
+                        display: true,
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            boxWidth: 8
+                        }
                     },
                     tooltip: {
                         mode: 'index',
-                        intersect: false
+                        intersect: false,
+                        callbacks: {
+                            title: function(context) {
+                                if (context && context.length > 0 && context[0].parsed) {
+                                    const date = new Date(context[0].parsed.x);
+                                    return formatDateTime(date);
+                                }
+                                return '';
+                            }
+                        }
                     }
                 },
                 scales: {
                     x: {
+                        type: 'time',
+                        time: {
+                            unit: 'hour',
+                            displayFormats: {
+                                hour: 'h a'
+                            },
+                            tooltipFormat: 'MMM d, h:mm a'
+                        },
+                        min: startTime,
+                        max: endTime,
                         display: true,
                         title: {
                             display: true,
-                            text: 'Time'
+                            text: 'Time (Local)'
                         },
                         ticks: {
-                            maxTicksLimit: 10
+                            maxRotation: 45,
+                            minRotation: 0
                         }
                     },
                     y: {
@@ -501,6 +617,36 @@ function showError(message) {
 function hideError() {
     document.getElementById('errorBanner').classList.add('hidden');
 }
+
+function setUpdatingIndicator(updating) {
+    isUpdating = updating;
+    const indicator = document.getElementById('liveIndicator');
+    if (indicator) {
+        if (updating) {
+            indicator.classList.add('updating');
+        } else {
+            indicator.classList.remove('updating');
+        }
+    }
+}
+
+function updateLiveIndicatorTime() {
+    const timeAgo = document.getElementById('updateTimeAgo');
+    if (timeAgo && lastUpdateTime) {
+        const seconds = Math.floor((new Date() - lastUpdateTime) / 1000);
+        if (seconds < 5) {
+            timeAgo.textContent = 'just now';
+        } else if (seconds < 60) {
+            timeAgo.textContent = `${seconds}s ago`;
+        } else {
+            const minutes = Math.floor(seconds / 60);
+            timeAgo.textContent = `${minutes}m ago`;
+        }
+    }
+}
+
+// Update the "time ago" display every 5 seconds to reduce performance impact
+setInterval(updateLiveIndicatorTime, 5000);
 
 // Main initialization
 async function init() {
