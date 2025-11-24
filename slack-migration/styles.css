@@ -131,6 +131,10 @@ section h2 {
 .prediction-card.hour { border-left-color: var(--secondary-color); }
 .prediction-card.weighted { border-left-color: var(--warning-color); }
 .prediction-card.regression { border-left-color: var(--error-color); }
+.prediction-card.upstream { 
+    border-left-color: #611f69; 
+    background: linear-gradient(135deg, #f3e8f5 0%, #e8d5ec 100%);
+}
 
 .prediction-card h3 {
     font-size: 1rem;

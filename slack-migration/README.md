@@ -6,25 +6,33 @@ A frontend application that tracks Slack migration progress and provides multipl
 
 - **Real-time Progress Display**: Shows current migration percentage with a visual progress bar
 - **Multiple Prediction Methods**:
-  1. **Overall Rate**: Calculates average rate from the beginning of tracking
-  2. **Last 20 Minutes**: Uses recent data to capture current migration pace
-  3. **Last Hour**: More stable prediction using the last hour of data
-  4. **Weighted Average**: Gives more weight to recent data points
-  5. **Linear Regression**: Fits a line through recent data points using least squares
+  1. **Upstream Prediction**: The prediction from the original tracking source
+  2. **Overall Rate**: Calculates average rate from the beginning of tracking
+  3. **Last 20 Minutes**: Uses recent data to capture current migration pace
+  4. **Last Hour**: More stable prediction using the last hour of data
+  5. **Weighted Average**: Gives more weight to recent data points
+  6. **Linear Regression**: Fits a line through recent data points using least squares
 - **Interactive Chart**: Visualizes progress over time using Chart.js
 - **Auto-refresh**: Updates every 30 seconds
+- **CORS Proxy Support**: Automatically tries multiple CORS proxies if direct fetch fails
 
 ## Usage
 
 Simply open `index.html` in a web browser. The application will:
-1. Fetch data from the migration API
-2. Display current progress
-3. Calculate and show predictions using all methods
-4. Auto-refresh every 30 seconds
+1. Fetch data from the migration tracking page
+2. Parse the embedded JavaScript data (labels, values, predictionTs)
+3. Display current progress
+4. Calculate and show predictions using all methods
+5. Auto-refresh every 30 seconds
 
 ## Data Source
 
 Data is fetched from: https://when-will-we-get-there.sahil.hackclub.app/
+
+The source returns an HTML page with embedded JavaScript containing:
+- `labels`: Array of timestamp strings (e.g., "2025-11-24 19:24:50")
+- `values`: Array of percentage values
+- `predictionTs`: Unix timestamp of the upstream prediction
 
 ## Files
 
@@ -49,7 +57,26 @@ php -S localhost:8000
 
 Then open http://localhost:8000 in your browser.
 
+## CORS Considerations
+
+The upstream data source may not have CORS headers enabled. The application attempts to:
+1. Fetch directly first
+2. Fall back to CORS proxies (corsproxy.io, allorigins.win)
+
+**Security Note**: Third-party CORS proxies can potentially intercept or modify data. For production use, consider:
+- Running your own local CORS proxy
+- Using a browser extension to disable CORS (development only)
+- Deploying a server-side proxy you control
+
+If you experience issues, you can:
+- Use a browser extension to disable CORS
+- Run a local CORS proxy
+- Open the source URL directly to verify it's working
+
 ## Prediction Methods Explained
+
+### Upstream Prediction
+The prediction provided by the original tracking source, extracted from the `predictionTs` variable in the HTML.
 
 ### Overall Rate
 Takes the total progress made divided by total time elapsed, then extrapolates to find when 100% will be reached. Best for long-term, stable processes.

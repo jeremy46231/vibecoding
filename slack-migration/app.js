@@ -3,81 +3,118 @@
 
 const API_URL = 'https://when-will-we-get-there.sahil.hackclub.app/';
 const REFRESH_INTERVAL = 30000; // 30 seconds
+const MAX_CHART_POINTS = 200;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const WEIGHTED_DECAY_FACTOR = 0.9; // Higher = more weight to recent data
+const REGRESSION_WINDOW_SIZE = 50; // Number of recent data points for regression
+
+// CORS proxy options - try multiple proxies in order
+// Note: Third-party CORS proxies may intercept data. For production, use a local proxy.
+const CORS_PROXIES = [
+    '', // Try direct first
+    'https://corsproxy.io/?',
+    'https://api.allorigins.win/raw?url=',
+];
 
 let chart = null;
 let migrationData = [];
+let upstreamPrediction = null;
+let currentProxyIndex = 0;
 
-// Fetch data from the API
+// Fetch data from the API (returns HTML with embedded JS data)
 async function fetchMigrationData() {
-    try {
-        const response = await fetch(API_URL);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+    // Try each proxy until one works
+    for (let i = 0; i < CORS_PROXIES.length; i++) {
+        const proxyIndex = (currentProxyIndex + i) % CORS_PROXIES.length;
+        const proxy = CORS_PROXIES[proxyIndex];
+        const url = proxy ? proxy + encodeURIComponent(API_URL) : API_URL;
+        
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const html = await response.text();
+            const data = parseHtmlData(html);
+            if (data && data.length > 0) {
+                currentProxyIndex = proxyIndex; // Remember working proxy
+                hideError();
+                return data;
+            }
+        } catch (error) {
+            console.warn(`Proxy ${proxyIndex} failed:`, error.message);
+            continue;
         }
-        const data = await response.json();
-        return data;
-    } catch (error) {
-        showError(`Failed to fetch data: ${error.message}`);
-        console.error('Error fetching migration data:', error);
-        return null;
     }
+    
+    showError('Failed to fetch data. CORS may be blocking the request. Try opening the source URL directly or use a local proxy.');
+    return null;
 }
 
-// Parse and normalize data
-// Assumes data is an array of objects with timestamp and percentage fields
-function parseData(rawData) {
-    if (!rawData) return [];
+// Parse the HTML response to extract embedded JavaScript data
+function parseHtmlData(html) {
+    if (!html) return [];
     
-    // Handle different possible data formats
-    let dataArray = rawData;
-    
-    // If it's an object with a data property
-    if (rawData.data && Array.isArray(rawData.data)) {
-        dataArray = rawData.data;
-    }
-    
-    // If it's an object with timestamps as keys
-    if (!Array.isArray(dataArray) && typeof dataArray === 'object') {
-        dataArray = Object.entries(dataArray).map(([key, value]) => ({
-            timestamp: key,
-            percentage: typeof value === 'object' ? value.percentage || value.progress : value
-        }));
-    }
-    
-    return dataArray.map(item => {
-        // Try to extract timestamp and percentage from various possible formats
-        let timestamp, percentage;
+    try {
+        // Extract the labels array
+        const labelsMatch = html.match(/const labels = \[([\s\S]*?)\];/);
+        // Extract the values array
+        const valuesMatch = html.match(/const values = \[([\s\S]*?)\];/);
+        // Extract the prediction timestamp
+        const predictionMatch = html.match(/const predictionTs = ([\d.]+);/);
+        // Extract start timestamp
+        const startMatch = html.match(/const startTs = ([\d.]+);/);
         
-        if (item.timestamp) {
-            timestamp = new Date(item.timestamp);
-        } else if (item.time) {
-            timestamp = new Date(item.time);
-        } else if (item.date) {
-            timestamp = new Date(item.date);
-        } else if (item.t) {
-            timestamp = new Date(item.t);
+        if (!labelsMatch || !valuesMatch) {
+            console.error('Could not find labels or values in HTML');
+            return [];
         }
         
-        if (typeof item.percentage === 'number') {
-            percentage = item.percentage;
-        } else if (typeof item.progress === 'number') {
-            percentage = item.progress;
-        } else if (typeof item.percent === 'number') {
-            percentage = item.percent;
-        } else if (typeof item.value === 'number') {
-            percentage = item.value;
-        } else if (typeof item.p === 'number') {
-            percentage = item.p;
-        } else if (typeof item === 'number') {
-            percentage = item;
+        // Parse labels (they are strings like "2025-11-24 19:24:50")
+        const labelsStr = labelsMatch[1];
+        const labels = labelsStr.match(/"([^"]+)"/g)?.map(s => s.replace(/"/g, '')) || [];
+        
+        // Parse values (they are numbers)
+        const valuesStr = valuesMatch[1];
+        const values = valuesStr.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+        
+        // Store upstream prediction if available
+        if (predictionMatch) {
+            const predTs = parseFloat(predictionMatch[1]);
+            if (!isNaN(predTs) && predTs > 0) {
+                upstreamPrediction = new Date(predTs * 1000);
+            }
         }
         
-        return {
-            timestamp: timestamp || new Date(),
-            percentage: percentage || 0
-        };
-    }).filter(item => !isNaN(item.timestamp.getTime()) && !isNaN(item.percentage))
-      .sort((a, b) => a.timestamp - b.timestamp);
+        // Combine labels and values into data points
+        const data = [];
+        for (let i = 0; i < Math.min(labels.length, values.length); i++) {
+            // Parse timestamp - expected format: "YYYY-MM-DD HH:mm:ss"
+            // Convert to ISO 8601 format by replacing space with T
+            const timestampStr = labels[i];
+            let timestamp;
+            
+            // Try ISO format first (with T separator)
+            if (timestampStr.includes('T')) {
+                timestamp = new Date(timestampStr);
+            } else {
+                // Convert space-separated format to ISO format
+                timestamp = new Date(timestampStr.replace(' ', 'T'));
+            }
+            
+            if (!isNaN(timestamp.getTime())) {
+                data.push({
+                    timestamp: timestamp,
+                    percentage: values[i]
+                });
+            }
+        }
+        
+        return data.sort((a, b) => a.timestamp - b.timestamp);
+    } catch (error) {
+        console.error('Error parsing HTML data:', error);
+        return [];
+    }
 }
 
 // Prediction Methods
@@ -192,10 +229,10 @@ function predictWeightedAverage(data) {
     // Apply exponential weighting (more recent = higher weight)
     let weightedSum = 0;
     let totalWeight = 0;
-    const decayFactor = 0.9;
     
-    for (let i = rates.length - 1; i >= 0; i--) {
-        const weight = Math.pow(decayFactor, rates.length - 1 - i);
+    for (let i = 0; i < rates.length; i++) {
+        // Higher index = more recent data = higher weight
+        const weight = Math.pow(WEIGHTED_DECAY_FACTOR, rates.length - 1 - i);
         weightedSum += rates[i].rate * weight;
         totalWeight += weight;
     }
@@ -216,11 +253,11 @@ function predictWeightedAverage(data) {
 }
 
 // Method 5: Linear Regression on recent data points
-function predictLinearRegression(data, windowSize = 50) {
+function predictLinearRegression(data) {
     if (data.length < 3) return null;
     
     // Use recent window of data
-    const recentData = data.slice(-Math.min(windowSize, data.length));
+    const recentData = data.slice(-Math.min(REGRESSION_WINDOW_SIZE, data.length));
     
     // Simple linear regression
     const n = recentData.length;
@@ -287,6 +324,16 @@ function updateUI(data) {
         predictLinearRegression(data)
     ].filter(p => p !== null);
     
+    // Add upstream prediction if available
+    if (upstreamPrediction) {
+        predictions.unshift({
+            name: 'Upstream Prediction',
+            predictedTime: upstreamPrediction,
+            ratePerHour: null, // Not provided by upstream
+            className: 'upstream'
+        });
+    }
+    
     renderPredictions(predictions);
     updateChart(data);
 }
@@ -304,11 +351,15 @@ function renderPredictions(predictions) {
         const timeDiff = pred.predictedTime - now;
         const relativeTime = formatRelativeTime(timeDiff);
         
+        const rateHtml = pred.ratePerHour !== null 
+            ? `<div class="prediction-rate">Rate: ${pred.ratePerHour.toFixed(4)}%/hour</div>`
+            : '';
+        
         card.innerHTML = `
             <h3>${pred.name}</h3>
             <div class="prediction-time">${formatDateTime(pred.predictedTime)}</div>
             <div class="prediction-relative">${relativeTime}</div>
-            <div class="prediction-rate">Rate: ${pred.ratePerHour.toFixed(4)}%/hour</div>
+            ${rateHtml}
         `;
         
         grid.appendChild(card);
@@ -324,8 +375,8 @@ function updateChart(data) {
     
     // Sample data if there are too many points
     let chartData = data;
-    if (data.length > 200) {
-        const step = Math.ceil(data.length / 200);
+    if (data.length > MAX_CHART_POINTS) {
+        const step = Math.ceil(data.length / MAX_CHART_POINTS);
         chartData = data.filter((_, i) => i % step === 0 || i === data.length - 1);
     }
     
@@ -404,7 +455,7 @@ function formatTime(date) {
 function formatDateTime(date) {
     const now = new Date();
     const isToday = date.toDateString() === now.toDateString();
-    const isTomorrow = new Date(now.getTime() + 86400000).toDateString() === date.toDateString();
+    const isTomorrow = new Date(now.getTime() + MS_PER_DAY).toDateString() === date.toDateString();
     
     if (isToday) {
         return `Today at ${formatTime(date)}`;
@@ -453,9 +504,10 @@ function hideError() {
 
 // Main initialization
 async function init() {
-    const rawData = await fetchMigrationData();
-    migrationData = parseData(rawData);
-    updateUI(migrationData);
+    migrationData = await fetchMigrationData();
+    if (migrationData) {
+        updateUI(migrationData);
+    }
 }
 
 // Start the app
@@ -463,9 +515,9 @@ init();
 
 // Auto-refresh
 setInterval(async () => {
-    const rawData = await fetchMigrationData();
-    if (rawData) {
-        migrationData = parseData(rawData);
+    const data = await fetchMigrationData();
+    if (data && data.length > 0) {
+        migrationData = data;
         updateUI(migrationData);
     }
 }, REFRESH_INTERVAL);
