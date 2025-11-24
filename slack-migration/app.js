@@ -398,6 +398,11 @@ function renderPredictions(predictions) {
 function updateChart(data, predictions = []) {
     const ctx = document.getElementById('progressChart').getContext('2d');
     
+    // Ensure we have data to display
+    if (!data || data.length === 0) {
+        return;
+    }
+    
     // Sample data if there are too many points
     let chartData = data;
     if (data.length > MAX_CHART_POINTS) {
@@ -424,8 +429,8 @@ function updateChart(data, predictions = []) {
         }
     }
     
-    // Add some buffer to the end
-    endTime = Math.min(endTime, lastDataTime + 24 * 60 * 60 * 1000); // Cap at 24 hours from now
+    // Cap at 24 hours from the last data point
+    endTime = Math.min(endTime, lastDataTime + MS_PER_DAY);
     
     // Define colors for prediction lines matching their card colors
     const predictionColors = {
@@ -439,23 +444,13 @@ function updateChart(data, predictions = []) {
     
     // Create datasets for each prediction line
     const predictionDatasets = predictions.map(pred => {
-        if (!pred.predictedTime || !pred.ratePerHour && pred.className !== 'upstream') {
-            // For upstream, draw a vertical line at the prediction time
-            if (pred.className === 'upstream') {
-                return {
-                    label: pred.name,
-                    data: [
-                        { x: lastDataTime, y: currentPercentage },
-                        { x: pred.predictedTime.getTime(), y: 100 }
-                    ],
-                    borderColor: predictionColors[pred.className] || '#888',
-                    borderWidth: 2,
-                    borderDash: [5, 5],
-                    pointRadius: 0,
-                    fill: false,
-                    tension: 0
-                };
-            }
+        // Skip if no predicted time
+        if (!pred.predictedTime) {
+            return null;
+        }
+        
+        // Skip if no rate (except for upstream which doesn't provide a rate)
+        if (!pred.ratePerHour && pred.className !== 'upstream') {
             return null;
         }
         
@@ -516,8 +511,11 @@ function updateChart(data, predictions = []) {
                         intersect: false,
                         callbacks: {
                             title: function(context) {
-                                const date = new Date(context[0].parsed.x);
-                                return formatDateTime(date);
+                                if (context && context.length > 0 && context[0].parsed) {
+                                    const date = new Date(context[0].parsed.x);
+                                    return formatDateTime(date);
+                                }
+                                return '';
                             }
                         }
                     }
@@ -540,7 +538,6 @@ function updateChart(data, predictions = []) {
                             text: 'Time (Local)'
                         },
                         ticks: {
-                            autoSkip: false,
                             maxRotation: 45,
                             minRotation: 0
                         }
@@ -648,8 +645,8 @@ function updateLiveIndicatorTime() {
     }
 }
 
-// Update the "time ago" display every second
-setInterval(updateLiveIndicatorTime, 1000);
+// Update the "time ago" display every 5 seconds to reduce performance impact
+setInterval(updateLiveIndicatorTime, 5000);
 
 // Main initialization
 async function init() {
