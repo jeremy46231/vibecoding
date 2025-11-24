@@ -11,6 +11,11 @@
         <header>
             <h1>🚀 Slack Migration Progress</h1>
             <p class="subtitle">Tracking the migration to completion</p>
+            <div class="live-indicator" id="liveIndicator">
+                <span class="pulse"></span>
+                <span class="live-text">Live</span>
+                <span class="update-time" id="updateTimeAgo">--</span>
+            </div>
         </header>
 
         <section class="current-status">
@@ -23,7 +28,7 @@
             </div>
             <div class="status-details">
                 <div class="stat">
-                    <span class="stat-label">Last Updated</span>
+                    <span class="stat-label">Last Data Point</span>
                     <span class="stat-value" id="lastUpdated">--</span>
                 </div>
                 <div class="stat">
@@ -87,6 +92,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <script src="app.js"></script>
 </body>
 </html>

@@ -45,6 +45,56 @@ header h1 {
     font-size: 1.1rem;
 }
 
+/* Live Indicator */
+.live-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    padding: 0.4rem 0.8rem;
+    background: rgba(46, 182, 125, 0.1);
+    border-radius: 20px;
+    font-size: 0.85rem;
+}
+
+.live-indicator .pulse {
+    width: 10px;
+    height: 10px;
+    background: var(--accent-color);
+    border-radius: 50%;
+    animation: pulse-animation 2s ease-in-out infinite;
+}
+
+.live-indicator.updating .pulse {
+    animation: pulse-animation 0.5s ease-in-out infinite;
+    background: var(--warning-color);
+}
+
+@keyframes pulse-animation {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.5;
+        transform: scale(0.8);
+    }
+}
+
+.live-indicator .live-text {
+    color: var(--accent-color);
+    font-weight: 600;
+}
+
+.live-indicator.updating .live-text {
+    color: var(--warning-color);
+}
+
+.live-indicator .update-time {
+    color: var(--text-light);
+    font-size: 0.8rem;
+}
+
 section {
     background: var(--card-bg);
     border-radius: 12px;
@@ -166,7 +216,8 @@ section h2 {
 }
 
 #progressChart {
-    max-height: 400px;
+    min-height: 400px;
+    max-height: 500px;
 }
 
 /* Methods Grid */
