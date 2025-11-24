@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slack Migration Progress Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Slack Migration Progress</h1>
+            <p class="subtitle">Tracking the migration to completion</p>
+        </header>
+
+        <section class="current-status">
+            <h2>Current Status</h2>
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <span class="progress-text" id="progressText">Loading...</span>
+            </div>
+            <div class="status-details">
+                <div class="stat">
+                    <span class="stat-label">Last Updated</span>
+                    <span class="stat-value" id="lastUpdated">--</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Data Points</span>
+                    <span class="stat-value" id="dataPoints">--</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="predictions">
+            <h2>📊 Completion Predictions</h2>
+            <div class="predictions-grid" id="predictionsGrid">
+                <!-- Predictions will be inserted here -->
+            </div>
+        </section>
+
+        <section class="chart-section">
+            <h2>📈 Progress Over Time</h2>
+            <canvas id="progressChart"></canvas>
+        </section>
+
+        <section class="methodology">
+            <h2>🔬 Prediction Methods Explained</h2>
+            <div class="methods-grid">
+                <div class="method-card">
+                    <h3>Overall Rate</h3>
+                    <p>Calculates the average rate from the beginning of tracking to now, then extrapolates to 100%.</p>
+                </div>
+                <div class="method-card">
+                    <h3>Last 20 Minutes</h3>
+                    <p>Uses only the most recent 20 minutes of data to capture the current pace of migration.</p>
+                </div>
+                <div class="method-card">
+                    <h3>Last Hour</h3>
+                    <p>Uses the last hour of data for a more stable but still recent prediction.</p>
+                </div>
+                <div class="method-card">
+                    <h3>Weighted Average</h3>
+                    <p>Gives more weight to recent data points while still considering historical trends.</p>
+                </div>
+                <div class="method-card">
+                    <h3>Linear Regression</h3>
+                    <p>Fits a line through recent data points using least squares regression.</p>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <p>Data source: <a href="https://when-will-we-get-there.sahil.hackclub.app/" target="_blank">when-will-we-get-there.sahil.hackclub.app</a></p>
+            <p>Auto-refreshes every 30 seconds</p>
+        </footer>
+    </div>
+
+    <div id="errorBanner" class="error-banner hidden">
+        <span id="errorMessage"></span>
+        <button onclick="hideError()">×</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
