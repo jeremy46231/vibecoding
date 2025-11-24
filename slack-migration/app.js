@@ -77,13 +77,23 @@ function parseHtmlData(html) {
             return [];
         }
         
-        // Parse labels (they are strings like "2025-11-24 19:24:50")
         const labelsStr = labelsMatch[1];
-        const labels = labelsStr.match(/"([^"]+)"/g)?.map(s => s.replace(/"/g, '')) || [];
+        const valuesStr = valuesMatch[1];
         
         // Parse values (they are numbers)
-        const valuesStr = valuesMatch[1];
         const values = valuesStr.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+        
+        // Detect label format: numeric timestamps (milliseconds) or string dates
+        // New format: [1764012290000.0, 1764012355000.0, ...] - Unix timestamps in milliseconds
+        // Old format: ["2025-11-24 19:24:50", ...] - UTC date strings
+        let labels;
+        if (labelsStr.includes('"')) {
+            // Old format: string dates
+            labels = labelsStr.match(/"([^"]+)"/g)?.map(s => s.replace(/"/g, '')) || [];
+        } else {
+            // New format: numeric timestamps in milliseconds
+            labels = labelsStr.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+        }
         
         // Store upstream prediction if available
         if (predictionMatch) {
@@ -96,18 +106,21 @@ function parseHtmlData(html) {
         // Combine labels and values into data points
         const data = [];
         for (let i = 0; i < Math.min(labels.length, values.length); i++) {
-            // Parse timestamp - expected format: "YYYY-MM-DD HH:mm:ss"
-            // The upstream data is in UTC, so we need to explicitly parse as UTC
-            const timestampStr = labels[i];
             let timestamp;
             
-            // Parse as UTC by appending 'Z' or using UTC methods
-            if (timestampStr.includes('T')) {
-                // Already in ISO format, ensure it's treated as UTC
-                timestamp = new Date(timestampStr.endsWith('Z') ? timestampStr : timestampStr + 'Z');
+            if (typeof labels[i] === 'number') {
+                // New format: labels are Unix timestamps in milliseconds
+                timestamp = new Date(labels[i]);
             } else {
-                // Convert space-separated format to ISO format with UTC indicator
-                timestamp = new Date(timestampStr.replace(' ', 'T') + 'Z');
+                // Old format: labels are UTC date strings like "YYYY-MM-DD HH:mm:ss"
+                const timestampStr = labels[i];
+                if (timestampStr.includes('T')) {
+                    // Already in ISO format, ensure it's treated as UTC
+                    timestamp = new Date(timestampStr.endsWith('Z') ? timestampStr : timestampStr + 'Z');
+                } else {
+                    // Convert space-separated format to ISO format with UTC indicator
+                    timestamp = new Date(timestampStr.replace(' ', 'T') + 'Z');
+                }
             }
             
             if (!isNaN(timestamp.getTime())) {
